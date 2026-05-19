@@ -1,0 +1,18 @@
+# IDE
+.vscode/
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+.conda/
+
+# Models (large files)
+*.pth
+*.pt
+
+# Output
+output/
+
+# Plan
+PLAN.md

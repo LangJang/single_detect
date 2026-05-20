@@ -11,7 +11,8 @@ from utils.utils import (cvtColor, get_anchors, get_classes, preprocess_input,
                          resize_image)
 from utils.utils_bbox import DecodeBox
 
-_MODEL_DIR = Path(__file__).parent
+_PROJECT_DIR = Path(__file__).parent
+_MODEL_DIR = _PROJECT_DIR / "models"
 
 
 class Detector:
@@ -32,9 +33,9 @@ class Detector:
             anchors_mask = [[6, 7, 8], [3, 4, 5], [0, 1, 2]]
 
         if classes_path is None:
-            classes_path = str(_MODEL_DIR / "model_data" / "coco_classes.txt")
+            classes_path = str(_PROJECT_DIR / "model_data" / "coco_classes.txt")
         if anchors_path is None:
-            anchors_path = str(_MODEL_DIR / "model_data" / "yolo_anchors.txt")
+            anchors_path = str(_PROJECT_DIR / "model_data" / "yolo_anchors.txt")
 
         self.input_shape = input_shape
         self.letterbox = letterbox

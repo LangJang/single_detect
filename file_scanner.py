@@ -1,51 +1,10 @@
 import json
 import os
 import re
-import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-from typing import Callable, Optional
-
-
-class ProcessedTracker:
-    """追踪已处理的视频文件，避免重复处理"""
-
-    def __init__(self, record_path: str = "processed.json"):
-        self.record_path = record_path
-        self._records: dict[str, dict] = self._load()
-
-    def _load(self) -> dict:
-        if os.path.exists(self.record_path):
-            with open(self.record_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        return {}
-
-    def _save(self):
-        with open(self.record_path, "w", encoding="utf-8") as f:
-            json.dump(self._records, f, indent=2, ensure_ascii=False)
-
-    def is_processed(self, filepath: str) -> bool:
-        return filepath in self._records
-
-    def mark_processed(self, filepath: str, result_summary: dict | None = None):
-        self._records[filepath] = {
-            "processed_at": datetime.now().isoformat(),
-            "summary": result_summary or {},
-        }
-        self._save()
-
-    def unmark(self, filepath: str):
-        self._records.pop(filepath, None)
-        self._save()
-
-    def get_summary(self, filepath: str) -> dict | None:
-        rec = self._records.get(filepath)
-        return rec["summary"] if rec else None
-
-    def clear(self):
-        self._records = {}
-        self._save()
+from typing import Optional
 
 
 class FileScanner:
@@ -65,15 +24,13 @@ class FileScanner:
         re.compile(r"(\d{4})-(\d{2})-(\d{2})[_-](\d{2})[.-](\d{2})[.-](\d{2})"),
     ]
 
-    def __init__(self, root_dir: str, tracker: ProcessedTracker | None = None):
+    def __init__(self, root_dir: str):
         self.root_dir = root_dir
-        self.tracker = tracker or ProcessedTracker()
 
     # ------------------------------------------------------------------
     def scan(self, start_dt: datetime | None = None,
              end_dt: datetime | None = None,
-             extensions: tuple = (".mp4", ".avi", ".mov", ".mkv"),
-             skip_processed: bool = True) -> list[dict]:
+             extensions: tuple = (".mp4", ".avi", ".mov", ".mkv")) -> list[dict]:
         """
         扫描 root_dir 下所有视频文件，返回时间范围内的文件列表。
 
@@ -101,9 +58,6 @@ class FileScanner:
             if end_dt and dt > end_dt:
                 continue
 
-            if skip_processed and self.tracker.is_processed(str(filepath)):
-                continue
-
             results.append({
                 "path": str(filepath),
                 "datetime": dt,
@@ -116,8 +70,7 @@ class FileScanner:
     # ------------------------------------------------------------------
     def scan_by_date_range(self, start_date: str, end_date: str,
                            start_time: str = "00:00:00",
-                           end_time: str = "23:59:59",
-                           **kwargs) -> list[dict]:
+                           end_time: str = "23:59:59") -> list[dict]:
         """
         便捷方法：用字符串指定日期范围。
         start_date / end_date: "2026-05-18"
@@ -125,59 +78,7 @@ class FileScanner:
         """
         start_dt = datetime.fromisoformat(f"{start_date}T{start_time}")
         end_dt = datetime.fromisoformat(f"{end_date}T{end_time}")
-        return self.scan(start_dt, end_dt, **kwargs)
-
-    # ------------------------------------------------------------------
-    def watch_for_new_files(
-        self,
-        callback: Callable[[str], None],
-        poll_interval: float = 10.0,
-        stable_time: float = 5.0,
-        extensions: tuple = (".mp4", ".avi", ".mov", ".mkv"),
-        stop_event: Optional["threading.Event"] = None,
-    ):
-        """
-        持续监控根目录下的新视频文件。
-
-        callback: 发现新文件且文件稳定后的回调，参数为文件路径
-        poll_interval: 轮询间隔（秒）
-        stable_time: 文件修改后需稳定的秒数，确保写入完成
-        stop_event: 外部停止信号（threading.Event）
-        """
-        import threading
-
-        if stop_event is None:
-            stop_event = threading.Event()
-
-        known_files: set[str] = set()
-        # 初始化已知文件列表
-        for f in self.scan(skip_processed=False):
-            known_files.add(f["path"])
-
-        while not stop_event.is_set():
-            try:
-                current_files = set()
-                root = Path(self.root_dir)
-                if root.exists():
-                    for filepath in root.rglob("*"):
-                        if not filepath.is_file():
-                            continue
-                        if filepath.suffix.lower() not in extensions:
-                            continue
-                        current_files.add(str(filepath))
-
-                new_files = current_files - known_files
-
-                for fp in new_files:
-                    # 检查文件是否还在写入（修改时间稳定检查）
-                    if self._is_file_stable(fp, stable_time):
-                        known_files.add(fp)
-                        callback(fp)
-
-            except Exception:
-                pass
-
-            stop_event.wait(poll_interval)
+        return self.scan(start_dt, end_dt)
 
     # ------------------------------------------------------------------
     def _extract_datetime(self, filepath: str) -> datetime | None:
@@ -235,17 +136,6 @@ class FileScanner:
             return datetime(year, month or 1, day or 1, hour, minute, sec)
         except ValueError:
             return None
-
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _is_file_stable(filepath: str, stable_sec: float) -> bool:
-        """检查文件在 stable_sec 秒内未被修改"""
-        try:
-            mtime = os.path.getmtime(filepath)
-            return (time.time() - mtime) >= stable_sec
-        except OSError:
-            return False
-
 
 class SceneConfig:
     """场景配置：封装一个监控场景的全部检测参数（模型、ROI、标定、告警）"""
@@ -314,16 +204,6 @@ class SceneConfig:
         s.alert_weight_area = d.get("alert_weight_area", 0.6)
         s.alert_max_count = d.get("alert_max_count", 10)
         return s
-
-    # ------------------------------------------------------------------
-    def save(self, filepath: str):
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
-
-    @classmethod
-    def load(cls, filepath: str) -> "SceneConfig":
-        with open(filepath, "r", encoding="utf-8") as f:
-            return cls.from_dict(json.load(f))
 
 
 @dataclass

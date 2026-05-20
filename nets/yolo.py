@@ -120,10 +120,10 @@ class RepConv(nn.Module):
 
     def fuse_conv_bn(self, conv, bn):
         std     = (bn.running_var + bn.eps).sqrt()
-        bias    = bn.bias - bn.running_mean * bn.weight / std
+        bias    = (bn.bias - bn.running_mean * bn.weight / std).detach()
 
         t       = (bn.weight / std).reshape(-1, 1, 1, 1)
-        weights = conv.weight * t
+        weights = (conv.weight * t).detach()
 
         bn      = nn.Identity()
         conv    = nn.Conv2d(in_channels = conv.in_channels,
@@ -173,8 +173,8 @@ class RepConv(nn.Module):
             bias_identity_expanded      = torch.nn.Parameter( torch.zeros_like(rbr_1x1_bias) )
             weight_identity_expanded    = torch.nn.Parameter( torch.zeros_like(weight_1x1_expanded) )            
         
-        self.rbr_dense.weight   = torch.nn.Parameter(self.rbr_dense.weight + weight_1x1_expanded + weight_identity_expanded)
-        self.rbr_dense.bias     = torch.nn.Parameter(self.rbr_dense.bias + rbr_1x1_bias + bias_identity_expanded)
+        self.rbr_dense.weight   = torch.nn.Parameter((self.rbr_dense.weight + weight_1x1_expanded + weight_identity_expanded).detach())
+        self.rbr_dense.bias     = torch.nn.Parameter((self.rbr_dense.bias + rbr_1x1_bias + bias_identity_expanded).detach())
                 
         self.rbr_reparam    = self.rbr_dense
         self.deploy         = True

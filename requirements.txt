@@ -1,6 +1,6 @@
-numpy>=1.21.0
-torch>=1.12.0
-torchvision>=0.13.0
-opencv-python>=4.8.0
-gradio>=4.0.0
-pillow>=10.0.0
+numpy==2.4.6
+torch==2.12.0
+torchvision==0.27.0
+opencv-python==4.13.0.92
+PySide6==6.11.1
+pillow==12.2.0

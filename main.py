@@ -1,9 +1,15 @@
-"""YOLO 目标检测系统 — Gradio UI.
+"""YOLO 目标检测系统 — Qt 桌面应用入口."""
 
-Launch with:  python main.py
-"""
+import sys
 
-from ui.layout import app
+from PySide6.QtWidgets import QApplication
+
+from ui.main_window import MainWindow
+
 
 if __name__ == "__main__":
-    app.launch(server_name="127.0.0.1", server_port=7860, share=False)
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())

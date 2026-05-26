@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 
 import cv2
-import gradio as gr
 
 import shared_state
 from alert_mail import AlertMailer
@@ -16,8 +15,9 @@ from video_processor import AlertEvaluator, RoiMask
 
 
 def scan_video_dir(directory: str):
+    """Return (file_list, info_str)."""
     if not directory or not os.path.isdir(directory):
-        return gr.update(choices=[], value=None), "目录不存在"
+        return [], "目录不存在"
     files = []
     for ext in (".mp4", ".avi", ".mov", ".mkv"):
         for f in Path(directory).rglob(f"*{ext}"):
@@ -27,8 +27,8 @@ def scan_video_dir(directory: str):
                 files.append(str(f))
     files.sort()
     if not files:
-        return gr.update(choices=[], value=None), "目录下没有视频文件"
-    return gr.update(choices=files, value=files[0]), f"找到 {len(files)} 个视频文件"
+        return [], "目录下没有视频文件"
+    return files, f"找到 {len(files)} 个视频文件"
 
 
 def process_single_video(
@@ -38,12 +38,17 @@ def process_single_video(
     output_annotated,
     email_enabled, email_smtp_server, email_smtp_port,
     email_sender, email_password, email_receivers,
-    progress=gr.Progress(),
+    progress_callback=None,
 ):
+    """Process a single video. Returns (preview_numpy, summary_str, csv_path).
+
+    progress_callback(current, total, desc) is called for progress updates.
+    """
     if not video_path or not os.path.isfile(video_path):
         return None, "视频文件不存在", ""
 
-    progress(0, desc="准备中...")
+    if progress_callback:
+        progress_callback(0, 100, "准备中...")
 
     cap_info = cv2.VideoCapture(video_path)
     frame_w = int(cap_info.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -77,10 +82,12 @@ def process_single_video(
     end = end_sec if end_sec > 0 else None
 
     def on_progress(current, total):
-        progress(current / total, desc=f"检测中 {current}/{total} 帧")
+        if progress_callback:
+            progress_callback(current, total, f"检测中 {current}/{total} 帧")
 
     try:
-        progress(0.05, desc="检测中...")
+        if progress_callback:
+            progress_callback(5, 100, "检测中...")
         result = shared_state.video_processor.process_video(
             video_path=video_path, conf=conf, nms_iou=nms_iou,
             frame_skip=frame_skip, start_sec=start_sec, end_sec=end,
@@ -90,7 +97,8 @@ def process_single_video(
     except Exception as e:
         return None, f"处理失败: {e}", ""
 
-    progress(0.90, desc="生成报告...")
+    if progress_callback:
+        progress_callback(90, 100, "生成报告...")
 
     csv_path = str(shared_state.OUTPUT_DIR / f"{Path(video_path).stem}_detections.csv")
     with open(csv_path, "w", encoding="utf-8") as f:
@@ -162,5 +170,8 @@ def process_single_video(
                     annotated = cv2.cvtColor(annotated_bgr, cv2.COLOR_BGR2RGB)
                 preview = annotated
             break
+
+    if progress_callback:
+        progress_callback(100, 100, "完成")
 
     return preview, summary, csv_path

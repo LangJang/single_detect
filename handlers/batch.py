@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 
 import cv2
-import gradio as gr
 
 import shared_state
 from alert_mail import AlertMailer
@@ -17,18 +16,19 @@ from video_processor import AlertEvaluator, RoiMask
 
 
 def scan_directory(root_dir, start_date, end_date, start_time, end_time):
+    """Return (info_str, file_list)."""
     if not root_dir or not os.path.isdir(root_dir):
-        return "目录不存在", gr.update(choices=[], value=[])
+        return "目录不存在", []
     scanner = FileScanner(root_dir)
     try:
         files = scanner.scan_by_date_range(start_date, end_date, start_time, end_time)
     except Exception as e:
-        return f"扫描失败: {e}", gr.update(choices=[], value=[])
+        return f"扫描失败: {e}", []
     if not files:
-        return "未找到匹配的视频文件", gr.update(choices=[], value=[])
+        return "未找到匹配的视频文件", []
     choices = [f["path"] for f in files]
     info = f"扫描到 {len(files)} 个视频（{start_date} {start_time} ~ {end_date} {end_time}）"
-    return info, gr.update(choices=choices, value=choices)
+    return info, choices
 
 
 def process_batch(
@@ -37,14 +37,18 @@ def process_batch(
     alert_w_area, alert_max_count, resume,
     email_enabled, email_smtp_server, email_smtp_port,
     email_sender, email_password, email_receivers,
-    progress=gr.Progress(),
+    progress_callback=None,
 ):
+    """Process a batch of videos. Returns (summary_str, log_str, output_dir).
+
+    progress_callback(current, total, desc) is called for progress updates.
+    """
     if not file_list:
         return "没有待处理的视频", "", ""
 
     shared_state.session_state["batch_stop_flag"] = False
-    progress(0, desc="开始批量处理...")
-    total = len(file_list)
+    if progress_callback:
+        progress_callback(0, len(file_list), "开始批量处理...")
 
     roi_points = parse_point_list(roi_text)
     calib_src = parse_point_list(calib_src_text)
@@ -86,11 +90,13 @@ def process_batch(
     alert_total = 0
     aggregated_counts: dict = {}
 
+    total = len(file_list)
     for i, vp in enumerate(file_list):
         if shared_state.session_state.get("batch_stop_flag"):
             log_lines.append("-- 用户停止 --")
             break
-        progress(i / total, desc=f"({i+1}/{total}): {Path(vp).name}")
+        if progress_callback:
+            progress_callback(i, total, f"({i+1}/{total}): {Path(vp).name}")
         if resume and ProcessedDB.is_processed(vp, "batch"):
             skipped += 1
             log_lines.append(f"[跳过] {Path(vp).name}")
@@ -101,7 +107,6 @@ def process_batch(
                 frame_skip=frame_skip, roi=roi, calibration=calib,
             )
             csv_path = str(all_csv_dir / f"{Path(vp).stem}_detections.csv")
-            # Read frame dimensions for alert evaluation
             cap_tmp = cv2.VideoCapture(vp)
             fw = int(cap_tmp.get(cv2.CAP_PROP_FRAME_WIDTH))
             fh = int(cap_tmp.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -158,10 +163,11 @@ def process_batch(
         f"类别分布: {json.dumps(aggregated_counts, ensure_ascii=False)}\n"
         f"结果目录: {all_csv_dir}"
     )
-    progress(1.0, desc="完成")
+    if progress_callback:
+        progress_callback(total, total, "完成")
     return summary, "\n".join(log_lines), str(all_csv_dir)
 
 
 def stop_batch():
+    """Set the batch stop flag."""
     shared_state.session_state["batch_stop_flag"] = True
-    return "已发送停止信号..."

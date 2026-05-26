@@ -23,18 +23,30 @@ def start_monitor(root_dir, conf, nms_iou, frame_skip, roi_text, roi_strategy,
                   poll_interval, stable_time,
                   alert_threshold, alert_w_count, alert_w_area, alert_max_count,
                   email_enabled, email_smtp_server, email_smtp_port,
-                  email_sender, email_password, email_receivers):
+                  email_sender, email_password, email_receivers,
+                  log_callback=None, status_callback=None):
+    """Start the monitor. Returns (status_str, log_text).
+
+    log_callback(msg) and status_callback(msg) are called for UI updates.
+    """
     if not root_dir or not os.path.isdir(root_dir):
         return "监控目录不存在", _monitor_log_text()
+
     _stop_monitor_inner()
+
     shared_state.session_state["monitor_logs"] = []
-    shared_state.session_state["monitor_logs"].append(
-        f"[{datetime.now().strftime('%H:%M:%S')}] 监控启动: {root_dir}"
-    )
+    def _log(msg):
+        shared_state.session_state["monitor_logs"].append(msg)
+        if log_callback:
+            log_callback(msg)
+
+    _log(f"[{datetime.now().strftime('%H:%M:%S')}] 监控启动: {root_dir}")
+
     roi = None
     roi_points = parse_point_list(roi_text)
     if roi_points and len(roi_points) >= 3:
         roi = RoiMask(roi_points, (1920, 1080), strategy=roi_strategy)
+
     stop_event = threading.Event()
     shared_state.session_state["monitor_stop_event"] = stop_event
 
@@ -44,7 +56,6 @@ def start_monitor(root_dir, conf, nms_iou, frame_skip, roi_text, roi_strategy,
     )
 
     def _loop():
-        # Load previously-processed paths from DB so they aren't re-detected
         known = set(ProcessedDB.get_processed_paths("monitor"))
 
         while not stop_event.is_set():
@@ -61,15 +72,12 @@ def start_monitor(root_dir, conf, nms_iou, frame_skip, roi_text, roi_strategy,
                     if stop_event.is_set():
                         break
                     known.add(fp)
-                    shared_state.session_state["monitor_logs"].append(
-                        f"[{datetime.now().strftime('%H:%M:%S')}] 发现: {Path(fp).name}"
-                    )
+                    _log(f"[{datetime.now().strftime('%H:%M:%S')}] 发现: {Path(fp).name}")
                     try:
                         result = shared_state.video_processor.process_video(
                             video_path=fp, conf=conf, nms_iou=nms_iou,
                             frame_skip=frame_skip, roi=roi,
                         )
-                        # Read frame dimensions for alert evaluation
                         cap_tmp = cv2.VideoCapture(fp)
                         frame_w = int(cap_tmp.get(cv2.CAP_PROP_FRAME_WIDTH))
                         frame_h = int(cap_tmp.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -82,7 +90,8 @@ def start_monitor(root_dir, conf, nms_iou, frame_skip, roi_text, roi_strategy,
                         with open(csv_path, "w", encoding="utf-8") as f:
                             f.write("frame_idx,timestamp_sec,label,confidence,x1,y1,x2,y2,alert\n")
                             for fr in result.frame_results:
-                                triggered, _, _ = alert_eval.evaluate(fr.detections, frame_w, frame_h)
+                                triggered, _, _ = alert_eval.evaluate(
+                                    fr.detections, frame_w, frame_h)
                                 if triggered:
                                     alert_frames += 1
                                 for d in fr.detections:
@@ -110,15 +119,11 @@ def start_monitor(root_dir, conf, nms_iou, frame_skip, roi_text, roi_strategy,
                                 alert_weights=(alert_w_count, alert_w_area),
                                 class_counts=result.class_counts,
                             )
-                        shared_state.session_state["monitor_logs"].append(
-                            f"[{datetime.now().strftime('%H:%M:%S')}] OK {Path(fp).name}"
-                            f" — {result.total_detections} 目标"
-                            f" (告警 {alert_frames}/{result.frames_processed} 帧)"
-                        )
+                        _log(f"[{datetime.now().strftime('%H:%M:%S')}] OK {Path(fp).name}"
+                             f" — {result.total_detections} 目标"
+                             f" (告警 {alert_frames}/{result.frames_processed} 帧)")
                     except Exception as e:
-                        shared_state.session_state["monitor_logs"].append(
-                            f"[{datetime.now().strftime('%H:%M:%S')}] FAIL {Path(fp).name}: {e}"
-                        )
+                        _log(f"[{datetime.now().strftime('%H:%M:%S')}] FAIL {Path(fp).name}: {e}")
                 if len(shared_state.session_state["monitor_logs"]) > 200:
                     del shared_state.session_state["monitor_logs"][:len(shared_state.session_state["monitor_logs"]) - 200]
             except Exception:
@@ -128,10 +133,12 @@ def start_monitor(root_dir, conf, nms_iou, frame_skip, roi_text, roi_strategy,
     t = threading.Thread(target=_loop, daemon=True)
     t.start()
     shared_state.session_state["monitor_thread"] = t
-    return (
-        f"监控运行中 (轮询间隔 {poll_interval}s, 稳定等待 {stable_time}s, 已处理 {len(ProcessedDB.get_processed_paths('monitor'))} 文件)",
-        _monitor_log_text(),
-    )
+
+    n_processed = len(ProcessedDB.get_processed_paths("monitor"))
+    status = f"监控运行中 (轮询间隔 {poll_interval}s, 稳定等待 {stable_time}s, 已处理 {n_processed} 文件)"
+    if status_callback:
+        status_callback(status)
+    return status, _monitor_log_text()
 
 
 def _wait_stable(fp, stable_time, stop_event):

@@ -7,7 +7,7 @@ import gradio as gr
 
 import shared_state
 from database import SceneDB
-from file_scanner import SceneConfig
+from scene_config import SceneConfig
 from geometry import format_point_list, parse_point_list
 
 

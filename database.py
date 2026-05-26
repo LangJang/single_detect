@@ -49,7 +49,12 @@ def init_db(output_dir: Path):
     _create_tables(conn)
 
     if is_new:
-        _migrate_json_data(conn, output_dir)
+        from database_migration import migrate_json_data
+        msg = migrate_json_data(
+            output_dir, lambda fields: _insert_scene(conn, fields), conn)
+        conn.commit()
+        if msg:
+            print(msg)
 
     # Return early — keep the startup connection; it will be re-used by the
     # same thread or a new one will be created for other threads.
@@ -99,68 +104,6 @@ def _create_tables(conn: sqlite3.Connection):
     conn.commit()
 
 
-def _migrate_json_data(conn: sqlite3.Connection, output_dir: Path):
-    """One-shot: read old JSON files into the new DB tables."""
-    from file_scanner import SceneConfig
-
-    # --- scene_*.json ---
-    migrated_scenes = 0
-    for f in sorted(output_dir.glob("scene_*.json")):
-        try:
-            with open(str(f), "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-            cfg = SceneConfig.from_dict(data)
-            _insert_scene(conn, cfg.to_dict())
-            migrated_scenes += 1
-        except Exception:
-            pass
-
-    # --- monitor_processed.json ---
-    monitor_json = output_dir / "monitor_processed.json"
-    migrated_monitor = _migrate_processed_json(conn, monitor_json, "monitor")
-
-    # --- batch_processed.json ---
-    batch_json = output_dir / "batch_processed.json"
-    migrated_batch = _migrate_processed_json(conn, batch_json, "batch")
-
-    conn.commit()
-
-    if migrated_scenes or migrated_monitor or migrated_batch:
-        print(
-            f"[DB migrate] scenes={migrated_scenes}  "
-            f"monitor={migrated_monitor}  batch={migrated_batch}"
-        )
-
-
-def _migrate_processed_json(conn: sqlite3.Connection, path: Path, mode: str) -> int:
-    if not path.exists():
-        return 0
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-    except Exception:
-        return 0
-
-    count = 0
-    for file_path, record in data.items():
-        summary = record.get("summary", {}) if isinstance(record, dict) else {}
-        try:
-            conn.execute(
-                """INSERT OR IGNORE INTO processed_files
-                   (file_path, mode, detection_count, frames_processed, processed_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (
-                    file_path,
-                    mode,
-                    summary.get("detections", 0),
-                    summary.get("frames", 0),
-                    record.get("processed_at", datetime.now().isoformat()) if isinstance(record, dict) else datetime.now().isoformat(),
-                ),
-            )
-            count += 1
-        except Exception:
-            pass
-    return count
 
 
 def _insert_scene(conn: sqlite3.Connection, fields: dict):

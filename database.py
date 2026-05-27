@@ -47,6 +47,7 @@ def init_db(output_dir: Path):
 
     conn = get_db()
     _create_tables(conn)
+    _migrate_schema(conn)
 
     if is_new:
         from database_migration import migrate_json_data
@@ -74,9 +75,12 @@ def _create_tables(conn: sqlite3.Connection):
             roi_points     TEXT DEFAULT '[]',
             roi_strategy   TEXT DEFAULT 'centroid',
             roi_resolution TEXT,
-            calib_src      TEXT DEFAULT '[]',
-            calib_dst      TEXT DEFAULT '[]',
-            calib_resolution TEXT,
+            calib_method          TEXT DEFAULT 'diagonal',
+            calib_physical_width  REAL DEFAULT 0.0,
+            calib_physical_height REAL DEFAULT 0.0,
+            calib_origin_x        REAL DEFAULT 0.0,
+            calib_origin_y        REAL DEFAULT 0.0,
+            calib_dst_points      TEXT DEFAULT '[]',
             alert_threshold    REAL DEFAULT 0.5,
             alert_weight_count REAL DEFAULT 0.4,
             alert_weight_area  REAL DEFAULT 0.6,
@@ -104,28 +108,42 @@ def _create_tables(conn: sqlite3.Connection):
     conn.commit()
 
 
+def _migrate_schema(conn: sqlite3.Connection):
+    """Add new columns that may be missing from older DB versions."""
+    migrations = [
+        "ALTER TABLE scenes ADD COLUMN calib_method TEXT DEFAULT 'diagonal'",
+        "ALTER TABLE scenes ADD COLUMN calib_physical_width REAL DEFAULT 0.0",
+        "ALTER TABLE scenes ADD COLUMN calib_physical_height REAL DEFAULT 0.0",
+        "ALTER TABLE scenes ADD COLUMN calib_origin_x REAL DEFAULT 0.0",
+        "ALTER TABLE scenes ADD COLUMN calib_origin_y REAL DEFAULT 0.0",
+        "ALTER TABLE scenes ADD COLUMN calib_dst_points TEXT DEFAULT '[]'",
+    ]
+    for sql in migrations:
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError:
+            pass
+    conn.commit()
 
 
 def _insert_scene(conn: sqlite3.Connection, fields: dict):
     """Insert one scene row. *fields* is a SceneConfig.to_dict() result."""
     ts = datetime.now().isoformat()
-    list_fields = ["roi_points", "calib_src", "calib_dst"]
-    json_fields = {k: json.dumps(fields.get(k, [])) for k in list_fields}
-    json_fields["roi_resolution"] = (
-        json.dumps(fields["roi_resolution"]) if fields.get("roi_resolution") else None
-    )
-    json_fields["calib_resolution"] = (
-        json.dumps(fields["calib_resolution"]) if fields.get("calib_resolution") else None
-    )
+    json_fields = {
+        "roi_points": json.dumps(fields.get("roi_points", [])),
+        "roi_resolution": json.dumps(fields["roi_resolution"]) if fields.get("roi_resolution") else None,
+        "calib_dst_points": json.dumps(fields.get("calib_dst_points", [])),
+    }
 
     conn.execute(
         """INSERT OR REPLACE INTO scenes
            (name, model_path, confidence, nms_iou, frame_skip, device,
             roi_points, roi_strategy, roi_resolution,
-            calib_src, calib_dst, calib_resolution,
+            calib_method, calib_physical_width, calib_physical_height,
+            calib_origin_x, calib_origin_y, calib_dst_points,
             alert_threshold, alert_weight_count, alert_weight_area, alert_max_count,
             created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             fields["name"],
             fields.get("model_path", "ep950-loss0.050-val_loss0.055.pth"),
@@ -136,9 +154,12 @@ def _insert_scene(conn: sqlite3.Connection, fields: dict):
             json_fields["roi_points"],
             fields.get("roi_strategy", "centroid"),
             json_fields["roi_resolution"],
-            json_fields["calib_src"],
-            json_fields["calib_dst"],
-            json_fields["calib_resolution"],
+            fields.get("calib_method", "diagonal"),
+            fields.get("calib_physical_width", 0.0),
+            fields.get("calib_physical_height", 0.0),
+            fields.get("calib_origin_x", 0.0),
+            fields.get("calib_origin_y", 0.0),
+            json_fields["calib_dst_points"],
             fields.get("alert_threshold", 0.5),
             fields.get("alert_weight_count", 0.4),
             fields.get("alert_weight_area", 0.6),
@@ -164,13 +185,12 @@ class SceneDB:
         if row is None:
             return None
         d = dict(row)
-        # Decode JSON columns back to Python lists
-        for col in ("roi_points", "calib_src", "calib_dst"):
+        for col in ("roi_points", "calib_dst_points"):
             try:
                 d[col] = json.loads(d[col])
             except (json.JSONDecodeError, TypeError):
                 d[col] = []
-        for col in ("roi_resolution", "calib_resolution"):
+        for col in ("roi_resolution",):
             try:
                 d[col] = json.loads(d[col]) if d[col] else None
             except (json.JSONDecodeError, TypeError):

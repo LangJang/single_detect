@@ -23,6 +23,8 @@ class MonitorWorker(QThread):
     status_signal = Signal(str)
 
     def __init__(self, root_dir, conf, nms_iou, frame_skip, roi_text, roi_strategy,
+                 calib_method, calib_physical_width, calib_physical_height,
+                 calib_origin_x, calib_origin_y, calib_dst_text,
                  poll_interval, stable_time,
                  alert_threshold, alert_w_count, alert_w_area, alert_max_count,
                  email_enabled, email_smtp_server, email_smtp_port,
@@ -32,7 +34,14 @@ class MonitorWorker(QThread):
         self._params = {
             "root_dir": root_dir, "conf": conf, "nms_iou": nms_iou,
             "frame_skip": frame_skip, "roi_text": roi_text,
-            "roi_strategy": roi_strategy, "poll_interval": poll_interval,
+            "roi_strategy": roi_strategy,
+            "calib_method": calib_method,
+            "calib_physical_width": calib_physical_width,
+            "calib_physical_height": calib_physical_height,
+            "calib_origin_x": calib_origin_x,
+            "calib_origin_y": calib_origin_y,
+            "calib_dst_text": calib_dst_text,
+            "poll_interval": poll_interval,
             "stable_time": stable_time, "alert_threshold": alert_threshold,
             "alert_w_count": alert_w_count, "alert_w_area": alert_w_area,
             "alert_max_count": alert_max_count, "email_enabled": email_enabled,
@@ -54,6 +63,30 @@ class MonitorWorker(QThread):
         roi_points = parse_point_list(p["roi_text"])
         if roi_points and len(roi_points) >= 3:
             roi = RoiMask(roi_points, (1920, 1080), strategy=p["roi_strategy"])
+
+        from calibration import CameraCalibration
+
+        calib = None
+        if roi_points and len(roi_points) == 4:
+            if p["calib_method"] == "diagonal":
+                if p["calib_physical_width"] > 0 and p["calib_physical_height"] > 0:
+                    calib = CameraCalibration()
+                    try:
+                        calib.set_from_roi(
+                            roi_points, p["calib_physical_width"],
+                            p["calib_physical_height"], (1920, 1080),
+                            p["calib_origin_x"], p["calib_origin_y"],
+                        )
+                    except Exception:
+                        pass
+            else:  # four_point
+                dst = parse_point_list(p["calib_dst_text"])
+                if dst and len(dst) == 4:
+                    calib = CameraCalibration()
+                    try:
+                        calib.set_homography(roi_points, dst, (1920, 1080))
+                    except Exception:
+                        pass
 
         stop_event = threading.Event()
         self._stop_event = stop_event
@@ -96,7 +129,7 @@ class MonitorWorker(QThread):
                     try:
                         result = shared_state.video_processor.process_video(
                             video_path=fp, conf=p["conf"], nms_iou=p["nms_iou"],
-                            frame_skip=p["frame_skip"], roi=roi,
+                            frame_skip=p["frame_skip"], roi=roi, calibration=calib,
                         )
                         cap_tmp = cv2.VideoCapture(fp)
                         frame_w = int(cap_tmp.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -176,7 +209,9 @@ class SingleVideoWorker(QThread):
     error_signal = Signal(str)
 
     def __init__(self, video_path, conf, nms_iou, frame_skip, start_sec, end_sec,
-                 roi_text, roi_strategy, calib_src_text, calib_dst_text,
+                 roi_text, roi_strategy,
+                 calib_method, calib_physical_width, calib_physical_height,
+                 calib_origin_x, calib_origin_y, calib_dst_text,
                  alert_threshold, alert_w_count, alert_w_area, alert_max_count,
                  output_annotated,
                  email_enabled, email_smtp_server, email_smtp_port,
@@ -187,7 +222,12 @@ class SingleVideoWorker(QThread):
             "video_path": video_path, "conf": conf, "nms_iou": nms_iou,
             "frame_skip": frame_skip, "start_sec": start_sec, "end_sec": end_sec,
             "roi_text": roi_text, "roi_strategy": roi_strategy,
-            "calib_src_text": calib_src_text, "calib_dst_text": calib_dst_text,
+            "calib_method": calib_method,
+            "calib_physical_width": calib_physical_width,
+            "calib_physical_height": calib_physical_height,
+            "calib_origin_x": calib_origin_x,
+            "calib_origin_y": calib_origin_y,
+            "calib_dst_text": calib_dst_text,
             "alert_threshold": alert_threshold, "alert_w_count": alert_w_count,
             "alert_w_area": alert_w_area, "alert_max_count": alert_max_count,
             "output_annotated": output_annotated,
@@ -221,15 +261,28 @@ class SingleVideoWorker(QThread):
             roi = RoiMask(roi_points, (frame_w, frame_h), strategy=p["roi_strategy"])
 
         calib = None
-        calib_src = parse_point_list(p["calib_src_text"])
-        calib_dst = parse_point_list(p["calib_dst_text"])
-        if calib_src and calib_dst and len(calib_src) == 4 and len(calib_dst) == 4:
-            calib = CameraCalibration()
-            try:
-                calib.set_homography(calib_src, calib_dst, (frame_w, frame_h))
-            except Exception as e:
-                self.error_signal.emit(f"标定设置失败: {e}")
-                return
+        if roi_points and len(roi_points) == 4:
+            if p["calib_method"] == "diagonal":
+                if p["calib_physical_width"] > 0 and p["calib_physical_height"] > 0:
+                    calib = CameraCalibration()
+                    try:
+                        calib.set_from_roi(
+                            roi_points, p["calib_physical_width"],
+                            p["calib_physical_height"], (frame_w, frame_h),
+                            p["calib_origin_x"], p["calib_origin_y"],
+                        )
+                    except Exception as e:
+                        self.error_signal.emit(f"标定设置失败: {e}")
+                        return
+            else:  # four_point
+                dst = parse_point_list(p["calib_dst_text"])
+                if dst and len(dst) == 4:
+                    calib = CameraCalibration()
+                    try:
+                        calib.set_homography(roi_points, dst, (frame_w, frame_h))
+                    except Exception as e:
+                        self.error_signal.emit(f"标定设置失败: {e}")
+                        return
 
         alert_eval = AlertEvaluator(
             threshold=p["alert_threshold"], weight_count=p["alert_w_count"],
@@ -347,8 +400,9 @@ class BatchWorker(QThread):
     finished_signal = Signal(str, str, str)          # summary, log_text, output_dir
 
     def __init__(self, file_list, conf, nms_iou, frame_skip, roi_text, roi_strategy,
-                 calib_src_text, calib_dst_text, alert_threshold, alert_w_count,
-                 alert_w_area, alert_max_count, resume,
+                 calib_method, calib_physical_width, calib_physical_height,
+                 calib_origin_x, calib_origin_y, calib_dst_text,
+                 alert_threshold, alert_w_count, alert_w_area, alert_max_count, resume,
                  email_enabled, email_smtp_server, email_smtp_port,
                  email_sender, email_password, email_receivers,
                  parent=None):
@@ -356,10 +410,16 @@ class BatchWorker(QThread):
         self._params = {
             "file_list": file_list, "conf": conf, "nms_iou": nms_iou,
             "frame_skip": frame_skip, "roi_text": roi_text,
-            "roi_strategy": roi_strategy, "calib_src_text": calib_src_text,
-            "calib_dst_text": calib_dst_text, "alert_threshold": alert_threshold,
-            "alert_w_count": alert_w_count, "alert_w_area": alert_w_area,
-            "alert_max_count": alert_max_count, "resume": resume,
+            "roi_strategy": roi_strategy,
+            "calib_method": calib_method,
+            "calib_physical_width": calib_physical_width,
+            "calib_physical_height": calib_physical_height,
+            "calib_origin_x": calib_origin_x,
+            "calib_origin_y": calib_origin_y,
+            "calib_dst_text": calib_dst_text,
+            "alert_threshold": alert_threshold, "alert_w_count": alert_w_count,
+            "alert_w_area": alert_w_area, "alert_max_count": alert_max_count,
+            "resume": resume,
             "email_enabled": email_enabled, "email_smtp_server": email_smtp_server,
             "email_smtp_port": email_smtp_port, "email_sender": email_sender,
             "email_password": email_password, "email_receivers": email_receivers,
@@ -381,12 +441,18 @@ class BatchWorker(QThread):
         self.progress_signal.emit(0, len(file_list), "开始批量处理...")
 
         roi_points = parse_point_list(p["roi_text"])
-        calib_src = parse_point_list(p["calib_src_text"])
-        calib_dst = parse_point_list(p["calib_dst_text"])
 
+        need_calib = (
+            (roi_points and len(roi_points) == 4)
+            and (
+                (p["calib_method"] == "diagonal"
+                 and p["calib_physical_width"] > 0 and p["calib_physical_height"] > 0)
+                or (p["calib_method"] == "four_point"
+                    and p["calib_dst_text"] and len(parse_point_list(p["calib_dst_text"])) == 4)
+            )
+        )
         need_dims = (
-            (roi_points and len(roi_points) >= 3)
-            or (calib_src and calib_dst and len(calib_src) == 4 and len(calib_dst) == 4)
+            (roi_points and len(roi_points) >= 3) or need_calib
         )
         vid_w = vid_h = 0
         if need_dims and file_list:
@@ -400,13 +466,28 @@ class BatchWorker(QThread):
             roi = RoiMask(roi_points, (vid_w, vid_h), strategy=p["roi_strategy"])
 
         calib = None
-        if calib_src and calib_dst and len(calib_src) == 4 and len(calib_dst) == 4:
-            calib = CameraCalibration()
-            try:
-                calib.set_homography(calib_src, calib_dst, (vid_w, vid_h))
-            except Exception as e:
-                self.finished_signal.emit(f"标定失败: {e}", "", "")
-                return
+        if roi_points and len(roi_points) == 4:
+            if p["calib_method"] == "diagonal":
+                if p["calib_physical_width"] > 0 and p["calib_physical_height"] > 0:
+                    calib = CameraCalibration()
+                    try:
+                        calib.set_from_roi(
+                            roi_points, p["calib_physical_width"],
+                            p["calib_physical_height"], (vid_w, vid_h),
+                            p["calib_origin_x"], p["calib_origin_y"],
+                        )
+                    except Exception as e:
+                        self.finished_signal.emit(f"标定失败: {e}", "", "")
+                        return
+            else:  # four_point
+                dst = parse_point_list(p["calib_dst_text"])
+                if dst and len(dst) == 4:
+                    calib = CameraCalibration()
+                    try:
+                        calib.set_homography(roi_points, dst, (vid_w, vid_h))
+                    except Exception as e:
+                        self.finished_signal.emit(f"标定失败: {e}", "", "")
+                        return
 
         alert_eval = AlertEvaluator(
             threshold=p["alert_threshold"], weight_count=p["alert_w_count"],

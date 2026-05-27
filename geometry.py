@@ -16,6 +16,14 @@ def sort_points_convex(points: list) -> list:
     return sorted(points, key=lambda p: math.atan2(p[1] - cy, p[0] - cx))
 
 
+def reorder_from_top_left(points: list) -> list:
+    """Rotate convex-ordered 4-point list to start from the top-left-most vertex."""
+    if len(points) < 4:
+        return list(points)
+    idx = min(range(len(points)), key=lambda i: (points[i][1], points[i][0]))
+    return points[idx:] + points[:idx]
+
+
 def _polygon_area(points: list) -> float:
     if len(points) < 3:
         return 0.0

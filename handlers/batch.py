@@ -33,8 +33,9 @@ def scan_directory(root_dir, start_date, end_date, start_time, end_time):
 
 def process_batch(
     file_list, conf, nms_iou, frame_skip, roi_text, roi_strategy,
-    calib_src_text, calib_dst_text, alert_threshold, alert_w_count,
-    alert_w_area, alert_max_count, resume,
+    calib_method, calib_physical_width, calib_physical_height,
+    calib_origin_x, calib_origin_y, calib_dst_text,
+    alert_threshold, alert_w_count, alert_w_area, alert_max_count, resume,
     email_enabled, email_smtp_server, email_smtp_port,
     email_sender, email_password, email_receivers,
     progress_callback=None,
@@ -51,12 +52,10 @@ def process_batch(
         progress_callback(0, len(file_list), "开始批量处理...")
 
     roi_points = parse_point_list(roi_text)
-    calib_src = parse_point_list(calib_src_text)
-    calib_dst = parse_point_list(calib_dst_text)
 
     need_dims = (
         (roi_points and len(roi_points) >= 3)
-        or (calib_src and calib_dst and len(calib_src) == 4 and len(calib_dst) == 4)
+        or (calib_physical_width > 0 and calib_physical_height > 0)
     )
     vid_w = vid_h = 0
     if need_dims and file_list:
@@ -70,12 +69,24 @@ def process_batch(
         roi = RoiMask(roi_points, (vid_w, vid_h), strategy=roi_strategy)
 
     calib = None
-    if calib_src and calib_dst and len(calib_src) == 4 and len(calib_dst) == 4:
-        calib = CameraCalibration()
-        try:
-            calib.set_homography(calib_src, calib_dst, (vid_w, vid_h))
-        except Exception as e:
-            return f"标定失败: {e}", "", ""
+    if roi_points and len(roi_points) == 4:
+        if calib_method == "diagonal":
+            if calib_physical_width > 0 and calib_physical_height > 0:
+                calib = CameraCalibration()
+                try:
+                    calib.set_from_roi(roi_points, calib_physical_width,
+                                       calib_physical_height, (vid_w, vid_h),
+                                       calib_origin_x, calib_origin_y)
+                except Exception as e:
+                    return f"标定失败: {e}", "", ""
+        else:  # four_point
+            dst = parse_point_list(calib_dst_text)
+            if dst and len(dst) == 4:
+                calib = CameraCalibration()
+                try:
+                    calib.set_homography(roi_points, dst, (vid_w, vid_h))
+                except Exception as e:
+                    return f"标定失败: {e}", "", ""
 
     alert_eval = AlertEvaluator(
         threshold=alert_threshold, weight_count=alert_w_count,
@@ -114,16 +125,20 @@ def process_batch(
 
             alert_frames = 0
             with open(csv_path, "w", encoding="utf-8") as f:
-                f.write("frame_idx,timestamp_sec,label,confidence,x1,y1,x2,y2,alert\n")
+                f.write("frame_idx,timestamp_sec,label,confidence,x1,y1,x2,y2,world_x,world_y,world_w,world_h,alert\n")
                 for fr in result.frame_results:
                     triggered, _, _ = alert_eval.evaluate(fr.detections, fw, fh)
                     if triggered:
                         alert_frames += 1
                     for d in fr.detections:
+                        wx = d.world_position[0] if d.world_position else ""
+                        wy = d.world_position[1] if d.world_position else ""
+                        ws_w = d.world_size[0] if d.world_size else ""
+                        ws_h = d.world_size[1] if d.world_size else ""
                         f.write(
                             f"{fr.frame_idx},{fr.timestamp_sec},{d.label},"
                             f"{d.confidence},{d.bbox[0]},{d.bbox[1]},{d.bbox[2]},{d.bbox[3]},"
-                            f"{int(triggered)}\n"
+                            f"{wx},{wy},{ws_w},{ws_h},{int(triggered)}\n"
                         )
             ProcessedDB.mark_processed(
                 file_path=vp,

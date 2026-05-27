@@ -23,7 +23,9 @@ def refresh_scene_list():
 
 
 def save_scene(name, model, conf, nms_iou, frame_skip, device,
-               roi_text, roi_strategy, calib_src_text, calib_dst_text,
+               roi_text, roi_strategy,
+               calib_method, calib_physical_width, calib_physical_height,
+               calib_origin_x, calib_origin_y, calib_dst_text,
                alert_threshold, alert_w_count, alert_w_area, alert_max_count):
     """Save a scene. Returns (status_str, choices_list, value)."""
     if not name or not name.strip():
@@ -38,8 +40,12 @@ def save_scene(name, model, conf, nms_iou, frame_skip, device,
     cfg.device = device
     cfg.roi_points = parse_point_list(roi_text)
     cfg.roi_strategy = roi_strategy
-    cfg.calib_src = parse_point_list(calib_src_text)
-    cfg.calib_dst = parse_point_list(calib_dst_text)
+    cfg.calib_method = calib_method
+    cfg.calib_physical_width = calib_physical_width
+    cfg.calib_physical_height = calib_physical_height
+    cfg.calib_origin_x = calib_origin_x
+    cfg.calib_origin_y = calib_origin_y
+    cfg.calib_dst_points = parse_point_list(calib_dst_text)
     cfg.alert_threshold = alert_threshold
     cfg.alert_weight_count = alert_w_count
     cfg.alert_weight_area = alert_w_area
@@ -90,8 +96,12 @@ def _scene_to_dict(cfg: SceneConfig) -> dict:
         "device": cfg.device,
         "roi_text": format_point_list(cfg.roi_points),
         "roi_strategy": cfg.roi_strategy,
-        "calib_src": format_point_list(cfg.calib_src),
-        "calib_dst": format_point_list(cfg.calib_dst),
+        "calib_method": cfg.calib_method,
+        "calib_physical_width": cfg.calib_physical_width,
+        "calib_physical_height": cfg.calib_physical_height,
+        "calib_origin_x": cfg.calib_origin_x,
+        "calib_origin_y": cfg.calib_origin_y,
+        "calib_dst_points": cfg.calib_dst_points,
         "alert_threshold": cfg.alert_threshold,
         "alert_w_count": cfg.alert_weight_count,
         "alert_w_area": cfg.alert_weight_area,

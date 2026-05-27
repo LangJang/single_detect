@@ -14,9 +14,12 @@ class SceneConfig:
         self.roi_strategy = "centroid"
         self.roi_resolution: tuple | None = None
         # 标定
-        self.calib_src: list[tuple] = []
-        self.calib_dst: list[tuple] = []
-        self.calib_resolution: tuple | None = None
+        self.calib_method: str = "diagonal"        # "diagonal" | "four_point"
+        self.calib_physical_width: float = 0.0     # 对角法：区域宽度(米)
+        self.calib_physical_height: float = 0.0    # 对角法：区域高度(米)
+        self.calib_origin_x: float = 0.0           # 对角法：左上角原点 X(米)
+        self.calib_origin_y: float = 0.0           # 对角法：左上角原点 Y(米)
+        self.calib_dst_points: list[tuple] = []    # 四点法：4个世界坐标
         # 告警
         self.alert_threshold = 0.5
         self.alert_weight_count = 0.4
@@ -35,9 +38,12 @@ class SceneConfig:
             "roi_points": self.roi_points,
             "roi_strategy": self.roi_strategy,
             "roi_resolution": list(self.roi_resolution) if self.roi_resolution else None,
-            "calib_src": self.calib_src,
-            "calib_dst": self.calib_dst,
-            "calib_resolution": list(self.calib_resolution) if self.calib_resolution else None,
+            "calib_method": self.calib_method,
+            "calib_physical_width": self.calib_physical_width,
+            "calib_physical_height": self.calib_physical_height,
+            "calib_origin_x": self.calib_origin_x,
+            "calib_origin_y": self.calib_origin_y,
+            "calib_dst_points": self.calib_dst_points,
             "alert_threshold": self.alert_threshold,
             "alert_weight_count": self.alert_weight_count,
             "alert_weight_area": self.alert_weight_area,
@@ -57,9 +63,12 @@ class SceneConfig:
         s.roi_points = d.get("roi_points", [])
         s.roi_strategy = d.get("roi_strategy", "centroid")
         s.roi_resolution = tuple(d["roi_resolution"]) if d.get("roi_resolution") else None
-        s.calib_src = d.get("calib_src", [])
-        s.calib_dst = d.get("calib_dst", [])
-        s.calib_resolution = tuple(d["calib_resolution"]) if d.get("calib_resolution") else None
+        s.calib_method = d.get("calib_method", "diagonal")
+        s.calib_physical_width = d.get("calib_physical_width", 0.0)
+        s.calib_physical_height = d.get("calib_physical_height", 0.0)
+        s.calib_origin_x = d.get("calib_origin_x", 0.0)
+        s.calib_origin_y = d.get("calib_origin_y", 0.0)
+        s.calib_dst_points = d.get("calib_dst_points", [])
         s.alert_threshold = d.get("alert_threshold", 0.5)
         s.alert_weight_count = d.get("alert_weight_count", 0.4)
         s.alert_weight_area = d.get("alert_weight_area", 0.6)

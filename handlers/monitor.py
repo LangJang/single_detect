@@ -20,6 +20,8 @@ from video_processor import AlertEvaluator, RoiMask
 
 
 def start_monitor(root_dir, conf, nms_iou, frame_skip, roi_text, roi_strategy,
+                  calib_method, calib_physical_width, calib_physical_height,
+                  calib_origin_x, calib_origin_y, calib_dst_text,
                   poll_interval, stable_time,
                   alert_threshold, alert_w_count, alert_w_area, alert_max_count,
                   email_enabled, email_smtp_server, email_smtp_port,
@@ -46,6 +48,26 @@ def start_monitor(root_dir, conf, nms_iou, frame_skip, roi_text, roi_strategy,
     roi_points = parse_point_list(roi_text)
     if roi_points and len(roi_points) >= 3:
         roi = RoiMask(roi_points, (1920, 1080), strategy=roi_strategy)
+
+    calib = None
+    if roi_points and len(roi_points) == 4:
+        if calib_method == "diagonal":
+            if calib_physical_width > 0 and calib_physical_height > 0:
+                calib = CameraCalibration()
+                try:
+                    calib.set_from_roi(roi_points, calib_physical_width,
+                                       calib_physical_height, (1920, 1080),
+                                       calib_origin_x, calib_origin_y)
+                except Exception:
+                    pass
+        else:  # four_point
+            dst = parse_point_list(calib_dst_text)
+            if dst and len(dst) == 4:
+                calib = CameraCalibration()
+                try:
+                    calib.set_homography(roi_points, dst, (1920, 1080))
+                except Exception:
+                    pass
 
     stop_event = threading.Event()
     shared_state.session_state["monitor_stop_event"] = stop_event
@@ -76,7 +98,7 @@ def start_monitor(root_dir, conf, nms_iou, frame_skip, roi_text, roi_strategy,
                     try:
                         result = shared_state.video_processor.process_video(
                             video_path=fp, conf=conf, nms_iou=nms_iou,
-                            frame_skip=frame_skip, roi=roi,
+                            frame_skip=frame_skip, roi=roi, calibration=calib,
                         )
                         cap_tmp = cv2.VideoCapture(fp)
                         frame_w = int(cap_tmp.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -88,17 +110,22 @@ def start_monitor(root_dir, conf, nms_iou, frame_skip, roi_text, roi_strategy,
                         csv_path = str(csv_dir / f"{Path(fp).stem}_detections.csv")
                         alert_frames = 0
                         with open(csv_path, "w", encoding="utf-8") as f:
-                            f.write("frame_idx,timestamp_sec,label,confidence,x1,y1,x2,y2,alert\n")
+                            f.write("frame_idx,timestamp_sec,label,confidence,x1,y1,x2,y2,world_x,world_y,world_w,world_h,alert\n")
                             for fr in result.frame_results:
                                 triggered, _, _ = alert_eval.evaluate(
                                     fr.detections, frame_w, frame_h)
                                 if triggered:
                                     alert_frames += 1
                                 for d in fr.detections:
+                                    wx = d.world_position[0] if d.world_position else ""
+                                    wy = d.world_position[1] if d.world_position else ""
+                                    ws_w = d.world_size[0] if d.world_size else ""
+                                    ws_h = d.world_size[1] if d.world_size else ""
                                     f.write(
                                         f"{fr.frame_idx},{fr.timestamp_sec},{d.label},"
                                         f"{d.confidence},{d.bbox[0]},{d.bbox[1]},"
-                                        f"{d.bbox[2]},{d.bbox[3]},{int(triggered)}\n"
+                                        f"{d.bbox[2]},{d.bbox[3]},"
+                                        f"{wx},{wy},{ws_w},{ws_h},{int(triggered)}\n"
                                     )
                         ProcessedDB.mark_processed(
                             file_path=fp,

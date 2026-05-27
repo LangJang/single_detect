@@ -28,6 +28,7 @@ class ClickableLabel(QLabel):
         self.setText("暂无图像")
         self._roi_points: list[tuple[float, float]] = []
         self._selection_active = False
+        self._roi_method: str = "four_point"
         self._original_size: tuple[int, int] = (1, 1)
         self._numpy_image: np.ndarray | None = None
 
@@ -59,6 +60,9 @@ class ClickableLabel(QLabel):
 
     def selection_active(self) -> bool:
         return self._selection_active
+
+    def set_roi_method(self, method: str):
+        self._roi_method = method
 
     # ------------------------------------------------------------------
     def mousePressEvent(self, event):
@@ -97,7 +101,7 @@ class ClickableLabel(QLabel):
 
         result = handle_image_click(
             frame_rgb, self._roi_points, self._selection_active,
-            float(img_x), float(img_y),
+            float(img_x), float(img_y), method=self._roi_method,
         )
         out_frame, coord_text, new_points, new_active = result
 

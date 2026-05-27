@@ -43,8 +43,8 @@ from scene_manager import (
 )
 from handlers.batch import scan_directory, stop_batch
 from handlers.monitor import _monitor_log_text, stop_monitor
+from geometry import format_point_list, parse_point_list
 from handlers.preview import (
-    autofill_calib_from_roi,
     clear_roi_selection,
     load_preview_video,
     seek_preview_frame,
@@ -345,6 +345,15 @@ class MainWindow(QMainWindow):
 
         # ROI controls column
         roi_col = QVBoxLayout()
+
+        # Method selector
+        method_row = QHBoxLayout()
+        method_row.addWidget(QLabel("标定方式"))
+        self.roi_method_combo = QComboBox()
+        self.roi_method_combo.addItems(["对角法（矩形）", "四点法（四边形）"])
+        method_row.addWidget(self.roi_method_combo)
+        roi_col.addLayout(method_row)
+
         btn_row = QHBoxLayout()
         self.roi_start_btn = QPushButton("开始选择区域")
         self.roi_clear_btn = QPushButton("清除区域")
@@ -370,22 +379,69 @@ class MainWindow(QMainWindow):
         roi_col.addWidget(QLabel("或手动输入坐标"))
         roi_col.addWidget(self.roi_manual_edit)
 
-        # Calibration
-        calib_grp = QGroupBox("相机标定 · Homography 4点法")
-        calib_lay = QVBoxLayout(calib_grp)
-        self.calib_src_edit = QPlainTextEdit()
-        self.calib_src_edit.setPlaceholderText("例如: 200,500  800,500  800,100  200,100")
-        self.calib_src_edit.setMaximumHeight(60)
-        calib_lay.addWidget(QLabel("像素坐标（4个地面点）"))
-        calib_lay.addWidget(self.calib_src_edit)
+        # Calibration — 两种标定方式
+        calib_grp = QGroupBox("相机标定")
+        self._calib_stack = QVBoxLayout(calib_grp)
+
+        # ---- 对角法：宽高 + 原点 ----
+        self._calib_diagonal = QWidget()
+        diag_lay = QVBoxLayout(self._calib_diagonal)
+        diag_lay.setContentsMargins(0, 0, 0, 0)
+        row_d1 = QHBoxLayout()
+        row_d1.addWidget(QLabel("区域宽度(米)"))
+        self.calib_width_spin = QDoubleSpinBox()
+        self.calib_width_spin.setRange(0.0, 100.0)
+        self.calib_width_spin.setValue(0.0)
+        self.calib_width_spin.setSingleStep(0.1)
+        self.calib_width_spin.setDecimals(2)
+        self.calib_width_spin.setSuffix(" m")
+        row_d1.addWidget(self.calib_width_spin)
+        row_d1.addWidget(QLabel("区域高度(米)"))
+        self.calib_height_spin = QDoubleSpinBox()
+        self.calib_height_spin.setRange(0.0, 100.0)
+        self.calib_height_spin.setValue(0.0)
+        self.calib_height_spin.setSingleStep(0.1)
+        self.calib_height_spin.setDecimals(2)
+        self.calib_height_spin.setSuffix(" m")
+        row_d1.addWidget(self.calib_height_spin)
+        diag_lay.addLayout(row_d1)
+        row_d2 = QHBoxLayout()
+        row_d2.addWidget(QLabel("原点 X(米)"))
+        self.calib_origin_x_spin = QDoubleSpinBox()
+        self.calib_origin_x_spin.setRange(-1000.0, 1000.0)
+        self.calib_origin_x_spin.setValue(0.0)
+        self.calib_origin_x_spin.setSingleStep(0.1)
+        self.calib_origin_x_spin.setDecimals(2)
+        self.calib_origin_x_spin.setSuffix(" m")
+        row_d2.addWidget(self.calib_origin_x_spin)
+        row_d2.addWidget(QLabel("原点 Y(米)"))
+        self.calib_origin_y_spin = QDoubleSpinBox()
+        self.calib_origin_y_spin.setRange(-1000.0, 1000.0)
+        self.calib_origin_y_spin.setValue(0.0)
+        self.calib_origin_y_spin.setSingleStep(0.1)
+        self.calib_origin_y_spin.setDecimals(2)
+        self.calib_origin_y_spin.setSuffix(" m")
+        row_d2.addWidget(self.calib_origin_y_spin)
+        diag_lay.addLayout(row_d2)
+        diag_lay.addWidget(QLabel("原点 = ROI 区域左上角在真实世界中的坐标"))
+        self._calib_stack.addWidget(self._calib_diagonal)
+
+        # ---- 四点法：4 个实际坐标 ----
+        self._calib_fourpt = QWidget()
+        four_lay = QVBoxLayout(self._calib_fourpt)
+        four_lay.setContentsMargins(0, 0, 0, 0)
         self.calib_dst_edit = QPlainTextEdit()
-        self.calib_dst_edit.setPlaceholderText("例如: 0,0  6,0  6,4  0,4")
-        self.calib_dst_edit.setMaximumHeight(60)
-        calib_lay.addWidget(QLabel("世界坐标（4点，单位：米）"))
-        calib_lay.addWidget(self.calib_dst_edit)
-        self.calib_autofill_btn = QPushButton("从 ROI 自动填充像素坐标")
-        calib_lay.addWidget(self.calib_autofill_btn)
+        self.calib_dst_edit.setPlaceholderText(
+            "4个实际世界坐标 (米):\nx1,y1  x2,y2  x3,y3  x4,y4\n例如: 0,0  2,0  2,1.5  0,1.5"
+        )
+        self.calib_dst_edit.setMaximumHeight(70)
+        four_lay.addWidget(QLabel("4个点的真实世界坐标（与 ROI 点一一对应）"))
+        four_lay.addWidget(self.calib_dst_edit)
+        self._calib_fourpt.setVisible(False)
+        self._calib_stack.addWidget(self._calib_fourpt)
+
         roi_col.addWidget(calib_grp)
+        self.roi_method_combo.currentIndexChanged.connect(self._on_calib_method_changed)
 
         row2.addLayout(roi_col, 2)
         lay.addLayout(row2)
@@ -659,7 +715,7 @@ class MainWindow(QMainWindow):
         self.roi_start_btn.clicked.connect(self._on_roi_start)
         self.roi_clear_btn.clicked.connect(self._on_roi_clear)
         self.roi_manual_edit.textChanged.connect(self._on_roi_manual)
-        self.calib_autofill_btn.clicked.connect(self._on_calib_autofill)
+        # Calibration auto-fill removed — user enters physical dimensions directly
         self.preview_label.roi_changed.connect(self._on_roi_points_changed)
 
         # --- Monitor ---
@@ -686,6 +742,12 @@ class MainWindow(QMainWindow):
         self.scene_combo.addItems(names)
 
     def _on_save_scene(self):
+        is_diag = self.roi_method_combo.currentIndex() == 0
+        calib_method = "diagonal" if is_diag else "four_point"
+        if is_diag:
+            calib_dst_text = ""
+        else:
+            calib_dst_text = self.calib_dst_edit.toPlainText().strip()
         status, choices, value = save_scene(
             self.scene_name_edit.text(),
             self.model_combo.currentText(),
@@ -695,8 +757,12 @@ class MainWindow(QMainWindow):
             self.device_combo.currentText(),
             self.roi_coords_edit.toPlainText().strip(),
             self.roi_strategy_combo.currentText(),
-            self.calib_src_edit.toPlainText().strip(),
-            self.calib_dst_edit.toPlainText().strip(),
+            calib_method,
+            self.calib_width_spin.value(),
+            self.calib_height_spin.value(),
+            self.calib_origin_x_spin.value(),
+            self.calib_origin_y_spin.value(),
+            calib_dst_text,
             self.athresh_spin.value(),
             self.wcount_spin.value(),
             self.warea_spin.value(),
@@ -718,8 +784,14 @@ class MainWindow(QMainWindow):
         self.device_combo.setCurrentText(d["device"])
         self.roi_coords_edit.setPlainText(d["roi_text"])
         self.roi_strategy_combo.setCurrentText(d["roi_strategy"])
-        self.calib_src_edit.setPlainText(d["calib_src"])
-        self.calib_dst_edit.setPlainText(d["calib_dst"])
+        method = d.get("calib_method", "diagonal")
+        self.roi_method_combo.setCurrentIndex(0 if method == "diagonal" else 1)
+        self.calib_width_spin.setValue(d.get("calib_physical_width", 0))
+        self.calib_height_spin.setValue(d.get("calib_physical_height", 0))
+        self.calib_origin_x_spin.setValue(d.get("calib_origin_x", 0))
+        self.calib_origin_y_spin.setValue(d.get("calib_origin_y", 0))
+        self.calib_dst_edit.setPlainText(
+            format_point_list(d.get("calib_dst_points", [])))
         self.athresh_spin.setValue(d["alert_threshold"])
         self.wcount_spin.setValue(d["alert_w_count"])
         self.warea_spin.setValue(d["alert_w_area"])
@@ -760,6 +832,12 @@ class MainWindow(QMainWindow):
         self.preview_label.set_numpy_image(frame)
         self.roi_points_state = []
 
+        # Sync video directory to all three task tabs
+        video_dir = str(Path(path).parent)
+        self.monitor_dir_edit.setText(video_dir)
+        self.video_dir_edit.setText(video_dir)
+        self.batch_dir_edit.setText(video_dir)
+
     def _on_frame_slider(self, idx):
         if not self.preview_video_meta:
             return
@@ -770,9 +848,12 @@ class MainWindow(QMainWindow):
         self.frame_info_lbl.setText(info_str)
 
     def _on_roi_start(self):
+        method = "diagonal" if "对角" in self.roi_method_combo.currentText() else "four_point"
         self.roi_selection_active = True
-        self.roi_coords_edit.setPlainText("请在预览图像上依次点击4个顶点（任意顺序均可）")
+        _, msg, _ = start_roi_selection(method)
+        self.roi_coords_edit.setPlainText(msg)
         self.roi_points_state = []
+        self.preview_label.set_roi_method(method)
         self.preview_label.set_selection_active(True)
 
     def _on_roi_clear(self):
@@ -800,16 +881,27 @@ class MainWindow(QMainWindow):
             self.preview_label.set_selection_active(False)
             self.roi_selection_active = False
 
-    def _on_calib_autofill(self):
-        src, dst = autofill_calib_from_roi(self.roi_points_state)
-        if src:
-            self.calib_src_edit.setPlainText(src)
-            self.calib_dst_edit.setPlainText(dst)
+    def _on_calib_method_changed(self, idx):
+        is_diag = idx == 0  # "对角法（矩形）"
+        self._calib_diagonal.setVisible(is_diag)
+        self._calib_fourpt.setVisible(not is_diag)
 
     def _on_roi_points_changed(self, points):
         self.roi_points_state = points
         from geometry import format_point_list
         self.roi_coords_edit.setPlainText(format_point_list(points))
+
+    def _calib_params(self):
+        """Return (method, width, height, origin_x, origin_y, dst_text)."""
+        is_diag = self.roi_method_combo.currentIndex() == 0
+        method = "diagonal" if is_diag else "four_point"
+        dst_text = "" if is_diag else self.calib_dst_edit.toPlainText().strip()
+        return (method,
+                self.calib_width_spin.value(),
+                self.calib_height_spin.value(),
+                self.calib_origin_x_spin.value(),
+                self.calib_origin_y_spin.value(),
+                dst_text)
 
     # ==================================================================
     # Monitor slots
@@ -820,12 +912,14 @@ class MainWindow(QMainWindow):
             self._monitor_worker.stop()
             self._monitor_worker.wait(2000)
 
+        cal_m, cal_w, cal_h, cal_ox, cal_oy, cal_dst = self._calib_params()
         self._monitor_worker = MonitorWorker(
             self.monitor_dir_edit.text(),
             self.conf_spin.value(), self.nms_spin.value(),
             self.fskip_spin.value(),
             self.roi_coords_edit.toPlainText().strip(),
             self.roi_strategy_combo.currentText(),
+            cal_m, cal_w, cal_h, cal_ox, cal_oy, cal_dst,
             self.poll_interval_spin.value(), self.stable_time_spin.value(),
             self.athresh_spin.value(), self.wcount_spin.value(),
             self.warea_spin.value(), self.alert_max_spin.value(),
@@ -872,6 +966,7 @@ class MainWindow(QMainWindow):
         self._progress_bar.setVisible(True)
         self._progress_bar.setValue(0)
 
+        cal_m, cal_w, cal_h, cal_ox, cal_oy, cal_dst = self._calib_params()
         self._single_worker = SingleVideoWorker(
             video_path,
             self.conf_spin.value(), self.nms_spin.value(),
@@ -879,8 +974,7 @@ class MainWindow(QMainWindow):
             self.end_sec_spin.value(),
             self.roi_coords_edit.toPlainText().strip(),
             self.roi_strategy_combo.currentText(),
-            self.calib_src_edit.toPlainText().strip(),
-            self.calib_dst_edit.toPlainText().strip(),
+            cal_m, cal_w, cal_h, cal_ox, cal_oy, cal_dst,
             self.athresh_spin.value(), self.wcount_spin.value(),
             self.warea_spin.value(), self.alert_max_spin.value(),
             self.output_annotated_cb.isChecked(),
@@ -954,14 +1048,14 @@ class MainWindow(QMainWindow):
         self._progress_bar.setValue(0)
         self.batch_log_edit.clear()
 
+        cal_m, cal_w, cal_h, cal_ox, cal_oy, cal_dst = self._calib_params()
         self._batch_worker = BatchWorker(
             file_list,
             self.conf_spin.value(), self.nms_spin.value(),
             self.fskip_spin.value(),
             self.roi_coords_edit.toPlainText().strip(),
             self.roi_strategy_combo.currentText(),
-            self.calib_src_edit.toPlainText().strip(),
-            self.calib_dst_edit.toPlainText().strip(),
+            cal_m, cal_w, cal_h, cal_ox, cal_oy, cal_dst,
             self.athresh_spin.value(), self.wcount_spin.value(),
             self.warea_spin.value(), self.alert_max_spin.value(),
             self.batch_resume_cb.isChecked(),

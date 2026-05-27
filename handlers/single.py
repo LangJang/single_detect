@@ -33,7 +33,9 @@ def scan_video_dir(directory: str):
 
 def process_single_video(
     video_path, conf, nms_iou, frame_skip, start_sec, end_sec,
-    roi_text, roi_strategy, calib_src_text, calib_dst_text,
+    roi_text, roi_strategy,
+    calib_method, calib_physical_width, calib_physical_height,
+    calib_origin_x, calib_origin_y, calib_dst_text,
     alert_threshold, alert_w_count, alert_w_area, alert_max_count,
     output_annotated,
     email_enabled, email_smtp_server, email_smtp_port,
@@ -61,14 +63,24 @@ def process_single_video(
         roi = RoiMask(roi_points, (frame_w, frame_h), strategy=roi_strategy)
 
     calib = None
-    calib_src = parse_point_list(calib_src_text)
-    calib_dst = parse_point_list(calib_dst_text)
-    if calib_src and calib_dst and len(calib_src) == 4 and len(calib_dst) == 4:
-        calib = CameraCalibration()
-        try:
-            calib.set_homography(calib_src, calib_dst, (frame_w, frame_h))
-        except Exception as e:
-            return None, f"标定设置失败: {e}", ""
+    if roi_points and len(roi_points) == 4:
+        if calib_method == "diagonal":
+            if calib_physical_width > 0 and calib_physical_height > 0:
+                calib = CameraCalibration()
+                try:
+                    calib.set_from_roi(roi_points, calib_physical_width,
+                                       calib_physical_height, (frame_w, frame_h),
+                                       calib_origin_x, calib_origin_y)
+                except Exception as e:
+                    return None, f"标定设置失败: {e}", ""
+        else:  # four_point
+            dst = parse_point_list(calib_dst_text)
+            if dst and len(dst) == 4:
+                calib = CameraCalibration()
+                try:
+                    calib.set_homography(roi_points, dst, (frame_w, frame_h))
+                except Exception as e:
+                    return None, f"标定设置失败: {e}", ""
 
     alert_eval = AlertEvaluator(
         threshold=alert_threshold, weight_count=alert_w_count,

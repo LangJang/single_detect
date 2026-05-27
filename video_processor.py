@@ -191,7 +191,7 @@ class VideoProcessor:
                     )
                     if calibration is not None:
                         try:
-                            wx, wy = calibration.pixel_to_world(cx, y2)
+                            wx, wy = calibration.pixel_to_world(cx, cy)
                             det.world_position = (round(wx, 3), round(wy, 3))
                             bw, bh = calibration.estimate_size(d["bbox"])
                             det.world_size = (round(bw, 3), round(bh, 3))

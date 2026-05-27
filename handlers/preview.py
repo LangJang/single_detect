@@ -42,34 +42,59 @@ def seek_preview_frame(video_meta: dict, frame_idx: int, roi_points: list):
     return frame, f"帧 {int(frame_idx)} / {total}"
 
 
-def handle_image_click(frame_rgb, roi_points, selection_active, click_x: float, click_y: float):
+def _diagonal_to_rect(p1: tuple, p2: tuple) -> list:
+    """Expand two diagonal corner points to 4 rectangle corners (TL, TR, BR, BL)."""
+    x1, x2 = min(p1[0], p2[0]), max(p1[0], p2[0])
+    y1, y2 = min(p1[1], p2[1]), max(p1[1], p2[1])
+    return [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+
+
+def handle_image_click(frame_rgb, roi_points, selection_active,
+                       click_x: float, click_y: float, method: str = "four_point"):
     """Handle an image click at (click_x, click_y) in original image coordinates.
+
+    method: 'four_point' | 'diagonal'
 
     Returns (frame_rgb, coord_text, new_points, new_active).
     """
     if not selection_active:
         return frame_rgb, format_point_list(roi_points), roi_points, False
+
     new_points = list(roi_points) + [(click_x, click_y)]
     msg = ""
-    if len(new_points) == 4:
-        sorted_pts = sort_points_convex(new_points)
-        if is_quadrilateral_valid(sorted_pts):
-            new_points = sorted_pts
+
+    if method == "diagonal":
+        if len(new_points) == 2:
+            new_points = _diagonal_to_rect(new_points[0], new_points[1])
             selection_active = False
-            msg = "4个点已选定，区域有效"
-        else:
-            new_points = []
-            msg = "区域无效（面积太小或点距离太近），请重新选择"
-    elif len(new_points) > 4:
-        new_points = [(click_x, click_y)]
-        msg = "已重置，请继续点击（第1/4个点）"
+            msg = "矩形区域已选定"
+        elif len(new_points) > 2:
+            new_points = [(click_x, click_y)]
+            msg = "已重置，请点击第一个对角顶点"
+    else:
+        if len(new_points) == 4:
+            sorted_pts = sort_points_convex(new_points)
+            if is_quadrilateral_valid(sorted_pts):
+                from geometry import reorder_from_top_left
+                new_points = reorder_from_top_left(sorted_pts)
+                selection_active = False
+                msg = "4个点已选定，区域有效"
+            else:
+                new_points = []
+                msg = "区域无效（面积太小或点距离太近），请重新选择"
+        elif len(new_points) > 4:
+            new_points = [(click_x, click_y)]
+            msg = "已重置，请继续点击（第1/4个点）"
+
     coord_str = format_point_list(new_points)
     out_frame = draw_roi_on_frame(frame_rgb, new_points)
     return out_frame, f"{coord_str}\n{msg}" if msg else coord_str, new_points, selection_active
 
 
-def start_roi_selection():
+def start_roi_selection(method: str = "four_point"):
     """Return (selection_active, status_msg, empty_points)."""
+    if method == "diagonal":
+        return True, "请在预览图像上依次点击矩形的2个对角顶点", []
     return True, "请在预览图像上依次点击4个顶点（任意顺序均可）", []
 
 
@@ -95,7 +120,5 @@ def sync_manual_roi(text, video_meta, frame_idx):
 
 
 def autofill_calib_from_roi(roi_points):
-    """Return (calib_src_text, calib_dst_text)."""
-    if not roi_points or len(roi_points) != 4:
-        return "", ""
-    return format_point_list(roi_points), "0,0  6,0  6,4  0,4"
+    """从 ROI 点推断标定参数（已弃用，保留兼容）。"""
+    return "", ""

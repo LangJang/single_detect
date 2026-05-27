@@ -130,6 +130,7 @@ class VideoProcessor:
         output_video_path: 若给定，输出带标注的视频
         progress_callback: (current_frame, total_frames) -> None
         """
+        frame_skip = int(frame_skip)
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise ValueError(f"无法打开视频: {video_path}")
@@ -238,6 +239,7 @@ class VideoProcessor:
         """
         流式处理视频，逐帧 yield (annotated_frame, detections)，用于实时预览。
         """
+        frame_skip = int(frame_skip)
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise ValueError(f"无法打开视频: {video_path}")

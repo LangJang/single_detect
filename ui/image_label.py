@@ -21,26 +21,31 @@ class ClickableLabel(QLabel):
         self.setMouseTracking(True)
         self.setAlignment(Qt.AlignCenter)
         self.setMinimumHeight(400)
-        self.setStyleSheet("border: 1px solid #ccc; background: #f0f0f0;")
+        self._scaled_size: tuple[int, int] = (1, 1)
+        self.setStyleSheet(
+            "border: 1px solid #3a3a3a; background: #1a1a1a; color: #888;"
+        )
+        self.setText("暂无图像")
         self._roi_points: list[tuple[float, float]] = []
         self._selection_active = False
         self._original_size: tuple[int, int] = (1, 1)
         self._numpy_image: np.ndarray | None = None
 
     def set_numpy_image(self, img: np.ndarray | None):
-        """Display a numpy RGB image, scaled to fit the label."""
+        """Display a numpy RGB image, scaled to 400px height."""
         self._numpy_image = img
         if img is None:
             self.clear()
+            self.setText("暂无图像")
             return
+        self.setText("")
         h, w, _ = img.shape
         self._original_size = (w, h)
         qimg = QImage(img.data, w, h, w * 3, QImage.Format_RGB888)
         pixmap = QPixmap.fromImage(qimg)
-        self.setPixmap(pixmap.scaled(
-            self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation,
-        ))
-        self.update()
+        scaled = pixmap.scaledToHeight(self.minimumHeight(), Qt.SmoothTransformation)
+        self.setPixmap(scaled)
+        self._scaled_size = (scaled.width(), scaled.height())
 
     def roi_points(self) -> list[tuple[float, float]]:
         return list(self._roi_points)
@@ -65,29 +70,24 @@ class ClickableLabel(QLabel):
             super().mousePressEvent(event)
             return
 
-        # Map label coordinates → pixmap display coordinates → original image coords
+        # Map label coords → display coords → original image coords
         label_w, label_h = self.width(), self.height()
-        pm_w, pm_h = pixmap.width(), pixmap.height()
+        disp_w, disp_h = self._scaled_size
+        img_w, img_h = self._original_size
 
-        # Compute offset due to KeepAspectRatio centering
-        scale = min(label_w / pm_w, label_h / pm_h)
-        display_w = pm_w * scale
-        display_h = pm_h * scale
-        offset_x = (label_w - display_w) / 2
-        offset_y = (label_h - display_h) / 2
+        # Letterbox offset from centered display
+        offset_x = (label_w - disp_w) / 2
+        offset_y = (label_h - disp_h) / 2
 
         click_x = event.position().x() - offset_x
         click_y = event.position().y() - offset_y
 
-        if click_x < 0 or click_y < 0 or click_x > display_w or click_y > display_h:
+        if click_x < 0 or click_y < 0 or click_x > disp_w or click_y > disp_h:
             super().mousePressEvent(event)
             return
 
-        # Map to pixmap coords then to original image coords
-        pm_x = click_x / scale
-        pm_y = click_y / scale
-        img_x = pm_x / pm_w * self._original_size[0]
-        img_y = pm_y / pm_h * self._original_size[1]
+        img_x = click_x / disp_w * img_w
+        img_y = click_y / disp_h * img_h
 
         from handlers.preview import handle_image_click
 
@@ -118,21 +118,17 @@ class ClickableLabel(QLabel):
             painter.end()
             return
 
-        # Compute the same scale and offset as the pixmap display
+        # Compute letterbox offset + scale from display pixmap
         label_w, label_h = self.width(), self.height()
-        pm_w, pm_h = pixmap.width(), pixmap.height()
-        scale = min(label_w / pm_w, label_h / pm_h)
-        display_w = pm_w * scale
-        display_h = pm_h * scale
-        offset_x = (label_w - display_w) / 2
-        offset_y = (label_h - display_h) / 2
-
-        # Map original image coords → label coords
+        disp_w, disp_h = self._scaled_size
         img_w, img_h = self._original_size
+        offset_x = (label_w - disp_w) / 2
+        offset_y = (label_h - disp_h) / 2
+
         label_points = []
         for px, py in self._roi_points:
-            lx = offset_x + (px / img_w) * display_w
-            ly = offset_y + (py / img_h) * display_h
+            lx = offset_x + (px / img_w) * disp_w
+            ly = offset_y + (py / img_h) * disp_h
             label_points.append(QPointF(lx, ly))
 
         # Draw polygon edges

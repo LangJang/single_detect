@@ -104,13 +104,68 @@ def _slider_spin_row(label, min_v, max_v, default, step, parent, scale_slider=3,
     return sld, spn, row
 
 
-def _section_group(title: str, parent=None) -> tuple[QGroupBox, QWidget]:
-    """Create a plain QGroupBox with a content widget inside."""
-    grp = QGroupBox(title, parent)
-    inner = QWidget(grp)
-    grp_lay = QVBoxLayout(grp)
-    grp_lay.addWidget(inner)
-    return grp, inner
+class CollapsibleSection(QWidget):
+    """A section with a clickable header that toggles content visibility.
+
+    Content is hidden when collapsed, preventing accidental parameter changes.
+    """
+
+    def __init__(self, title: str, parent=None):
+        super().__init__(parent)
+        self._title = title
+        self._collapsed = False
+
+        self._header = QPushButton(f"▼  {title}")
+        self._header.setFlat(True)
+        self._header.setCursor(Qt.PointingHandCursor)
+        self._header.setStyleSheet(
+            "QPushButton {"
+            "  text-align: left;"
+            "  padding: 5px 12px;"
+            "  font-weight: bold;"
+            "  font-size: 13px;"
+            "  border: 1px solid #2a2a2a;"
+            "  border-bottom: 2px solid #1a1a1a;"
+            "  border-radius: 6px;"
+            "  background: qlineargradient(x1:0,y1:0, x2:0,y2:1,"
+            "    stop:0 #3d3d3d, stop:1 #282828);"
+            "  color: #ddd;"
+            "}"
+            "QPushButton:hover {"
+            "  border-color: #4a4a4a;"
+            "  border-bottom-color: #3a3a3a;"
+            "  background: qlineargradient(x1:0,y1:0, x2:0,y2:1,"
+            "    stop:0 #4a4a4a, stop:1 #333333);"
+            "}"
+            "QPushButton:pressed {"
+            "  border-bottom: 1px solid #2a2a2a;"
+            "  background: qlineargradient(x1:0,y1:0, x2:0,y2:1,"
+            "    stop:0 #282828, stop:1 #3a3a3a);"
+            "}"
+        )
+        self._header.clicked.connect(self._toggle)
+
+        self._content = QWidget()
+
+        self._group = QGroupBox()
+        group_lay = QVBoxLayout(self._group)
+        group_lay.setContentsMargins(0, 0, 0, 0)
+        group_lay.addWidget(self._content)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self._header)
+        layout.addWidget(self._group)
+
+    def content(self) -> QWidget:
+        return self._content
+
+    def _toggle(self):
+        self._collapsed = not self._collapsed
+        self._content.setVisible(not self._collapsed)
+        arrow = "▶" if self._collapsed else "▼"
+        self._header.setText(f"{arrow}  {self._title}")
 
 
 # ---------------------------------------------------------------------------
@@ -206,8 +261,8 @@ class MainWindow(QMainWindow):
     # ==================================================================
 
     def _build_detection_section(self):
-        grp = QGroupBox("检测参数")
-        lay = QVBoxLayout(grp)
+        section = CollapsibleSection("检测参数")
+        lay = QVBoxLayout(section.content())
 
         row1 = QHBoxLayout()
         self.model_combo = QComboBox()
@@ -224,47 +279,63 @@ class MainWindow(QMainWindow):
         lay.addLayout(row1)
 
         row2 = QHBoxLayout()
-        _, _, self.conf_row = _slider_spin_row("置信度阈值", 0.1, 0.9, 0.25, 0.05, grp)
+        _, _, self.conf_row = _slider_spin_row("置信度阈值", 0.1, 0.9, 0.25, 0.05, section.content())
         self.conf_slider = self.conf_row.layout().itemAt(1).widget()
         self.conf_spin = self.conf_row.layout().itemAt(2).widget()
-        _, _, self.nms_row = _slider_spin_row("NMS IoU", 0.1, 0.9, 0.3, 0.05, grp)
+        _, _, self.nms_row = _slider_spin_row("NMS IoU", 0.1, 0.9, 0.3, 0.05, section.content())
         self.nms_slider = self.nms_row.layout().itemAt(1).widget()
         self.nms_spin = self.nms_row.layout().itemAt(2).widget()
-        _, _, self.fskip_row = _slider_spin_row("帧采样间隔", 1, 60, 10, 1, grp)
-        self.fskip_slider = self.fskip_row.layout().itemAt(1).widget()
-        self.fskip_spin = self.fskip_row.layout().itemAt(2).widget()
+        # frame_skip uses QSpinBox (int) because range() requires int
+        self.fskip_row = QWidget(section.content())
+        fskip_lay = QHBoxLayout(self.fskip_row)
+        fskip_lay.setContentsMargins(0, 0, 0, 0)
+        fskip_lay.addWidget(QLabel("帧采样间隔"), 1)
+        self.fskip_slider = QSlider(Qt.Horizontal)
+        self.fskip_slider.setRange(1, 60)
+        self.fskip_slider.setValue(10)
+        self.fskip_spin = QSpinBox()
+        self.fskip_spin.setRange(1, 60)
+        self.fskip_spin.setValue(10)
+        self.fskip_slider.valueChanged.connect(self.fskip_spin.setValue)
+        self.fskip_spin.valueChanged.connect(self.fskip_slider.setValue)
+        fskip_lay.addWidget(self.fskip_slider, 3)
+        fskip_lay.addWidget(self.fskip_spin, 1)
         row2.addWidget(self.conf_row)
         row2.addWidget(self.nms_row)
         row2.addWidget(self.fskip_row)
         lay.addLayout(row2)
 
-        self._main_layout.addWidget(grp)
+        self._main_layout.addWidget(section)
 
     # ==================================================================
     # ROI & Calibration
     # ==================================================================
 
     def _build_roi_section(self):
-        grp, content = _section_group("ROI 区域 & 相机标定")
-        lay = QVBoxLayout(content)
+        section = CollapsibleSection("ROI 区域 & 相机标定")
+        lay = QVBoxLayout(section.content())
 
-        # Preview row
-        row1 = QHBoxLayout()
+        # Video path row
+        row_path = QHBoxLayout()
         self.preview_path_edit = QLineEdit()
         self.preview_path_edit.setPlaceholderText("输入视频文件路径...")
         self.load_preview_btn = QPushButton("加载预览")
+        row_path.addWidget(QLabel("预览视频"), 1)
+        row_path.addWidget(self.preview_path_edit, 4)
+        row_path.addWidget(self.load_preview_btn, 1)
+        lay.addLayout(row_path)
+
+        # Frame slider row
+        row_slider = QHBoxLayout()
         self.frame_slider = QSlider(Qt.Horizontal)
         self.frame_slider.setRange(0, 100)
         self.frame_slider.setValue(0)
         self.frame_slider.setEnabled(False)
         self.frame_info_lbl = QLabel("请先加载预览视频")
-        row1.addWidget(QLabel("预览视频"), 1)
-        row1.addWidget(self.preview_path_edit, 3)
-        row1.addWidget(self.load_preview_btn, 1)
-        row1.addWidget(QLabel("跳转到帧"), 1)
-        row1.addWidget(self.frame_slider, 2)
-        row1.addWidget(self.frame_info_lbl, 2)
-        lay.addLayout(row1)
+        row_slider.addWidget(QLabel("跳转到帧"), 1)
+        row_slider.addWidget(self.frame_slider, 8)
+        row_slider.addWidget(self.frame_info_lbl, 3)
+        lay.addLayout(row_slider)
 
         # Image + ROI controls
         row2 = QHBoxLayout()
@@ -319,18 +390,18 @@ class MainWindow(QMainWindow):
         row2.addLayout(roi_col, 2)
         lay.addLayout(row2)
 
-        self._main_layout.addWidget(grp)
+        self._main_layout.addWidget(section)
 
     # ==================================================================
     # Alert Settings
     # ==================================================================
 
     def _build_alert_section(self):
-        grp, content = _section_group("告警设置")
-        lay = QVBoxLayout(content)
+        section = CollapsibleSection("告警设置")
+        lay = QVBoxLayout(section.content())
 
         row1 = QHBoxLayout()
-        _, _, self.athresh_row = _slider_spin_row("告警阈值", 0.1, 1.0, 0.5, 0.05, grp)
+        _, _, self.athresh_row = _slider_spin_row("告警阈值", 0.1, 1.0, 0.5, 0.05, section.content())
         self.athresh_slider = self.athresh_row.layout().itemAt(1).widget()
         self.athresh_spin = self.athresh_row.layout().itemAt(2).widget()
         row1.addWidget(self.athresh_row)
@@ -342,10 +413,10 @@ class MainWindow(QMainWindow):
         lay.addLayout(row1)
 
         row2 = QHBoxLayout()
-        _, _, self.wcount_row = _slider_spin_row("数量权重", 0.0, 1.0, 0.4, 0.1, grp)
+        _, _, self.wcount_row = _slider_spin_row("数量权重", 0.0, 1.0, 0.4, 0.1, section.content())
         self.wcount_slider = self.wcount_row.layout().itemAt(1).widget()
         self.wcount_spin = self.wcount_row.layout().itemAt(2).widget()
-        _, _, self.warea_row = _slider_spin_row("面积权重", 0.0, 1.0, 0.6, 0.1, grp)
+        _, _, self.warea_row = _slider_spin_row("面积权重", 0.0, 1.0, 0.6, 0.1, section.content())
         self.warea_slider = self.warea_row.layout().itemAt(1).widget()
         self.warea_spin = self.warea_row.layout().itemAt(2).widget()
         row2.addWidget(self.wcount_row)
@@ -384,7 +455,7 @@ class MainWindow(QMainWindow):
         email_lay.addWidget(self.email_recv_edit)
         lay.addWidget(email_grp)
 
-        self._main_layout.addWidget(grp)
+        self._main_layout.addWidget(section)
 
     # ==================================================================
     # Task Tabs
@@ -483,10 +554,13 @@ class MainWindow(QMainWindow):
         lay.addLayout(row3)
 
         row4 = QHBoxLayout()
-        self.result_preview_label = QLabel()
+        self.result_preview_label = QLabel("暂无检测结果\n\n请选择视频并点击「开始处理」")
         self.result_preview_label.setAlignment(Qt.AlignCenter)
         self.result_preview_label.setMinimumHeight(300)
-        self.result_preview_label.setStyleSheet("border: 1px solid #ccc; background: #f0f0f0;")
+        self.result_preview_label.setStyleSheet(
+            "border: 1px solid #3a3a3a; background: #1a1a1a; color: #666;"
+            " font-size: 14px;"
+        )
         self.result_summary_edit = QPlainTextEdit()
         self.result_summary_edit.setReadOnly(True)
         row4.addWidget(self.result_preview_label, 3)
